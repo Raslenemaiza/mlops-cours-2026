@@ -459,8 +459,8 @@ uv run python packaging/app/verify_onnx.py
 > préfère exporter le modèle **avant** le `docker build` et le copier dans l'image : (1) une image
 > = une version du modèle, immuable — le tag `1.0.0` désigne toujours le même modèle, et revenir
 > en arrière consiste à redéployer l'image précédente ; (2) le conteneur démarre sans
-> réseau ni MLflow, donc vite et même si MLflow est en panne (crucial quand l'autoscaling crée
-> des pods à la volée) ; (3) aucun accès au Registry à donner aux pods ; (4) ce que Trivy et
+> réseau ni MLflow, donc vite et même si MLflow est en panne (utile quand on démarre beaucoup
+> de conteneurs d'un coup) ; (3) aucun accès au Registry à donner aux pods ; (4) ce que Trivy et
 > ModelScan analysent est exactement ce qui tourne ; (5) l'image n'embarque ni MLflow ni
 > scikit-learn (plusieurs centaines de Mo). Contrepartie : il faut reconstruire l'image à chaque
 > nouveau modèle. À la main, combien de temps et combien d'erreurs possibles ?
@@ -1403,8 +1403,8 @@ cp labs/m4-packaging/starter/rapport-m4.md reports/rapport-m4.md
 - **Interprétation** : pourquoi optimized est plus petite ? Pourquoi ONNX est plus rapide que
   scikit-learn ? Que montrent les scans ?
 - **Choix recommandé** : laquelle retenir en prod pour ce cas d'usage ? Justifier.
-- **Pistes d'amélioration** : quantization INT8, image distroless, préchargement du modèle dans
-  un Init Container…
+- **Pistes d'amélioration** : deux ou trois changements que vous proposeriez, et ce que vous
+  mesureriez pour prouver qu'ils marchent.
 
 Commitez ensuite le travail. `packaging/model/` (quelques ko à quelques Mo) est versionné : n'importe qui
 peut reconstruire l'image sans accès à votre MLflow. Les pickles de démonstration
@@ -1470,6 +1470,25 @@ puis vous revenez sur `main` : `git switch main && git pull`.
 ```bash
 make check-m4
 ```
+
+## Lien avec le mini-projet
+
+- **Extensions : déclaration au plus tard à la fin de cette séance.** Une extension par étudiant,
+  deux extensions différentes dans un binôme, au plus 3 binômes par extension et par groupe
+  (premier déclaré, premier servi). Catalogue : `labs/m10-capstone/README.md`, section
+  « L'extension personnelle » ; déclaration par l'issue « Mini-projet : déclarer mon extension »
+  du repo du cours. Trois extensions prolongent directement ce lab : `onnx-quantifie`,
+  `supply-chain`, `batch-scoring`.
+- **L'image de votre projet** : ce lab produit l'API de scoring de votre mini-projet. C'est elle que
+  l'exigence « Projet en ligne » du guide met en ligne en HTTPS (`/health`, `/predict`, `/docs`,
+  `/metadata`) : gardez son contrat stable (étape 2.3).
+- **Dataset libre** : rien à changer dans le code, tout vient de `dataset.yaml`. Lisez l'encadré
+  « Vous travaillez sur votre propre dataset ? » au début du lab, vérifiez dans `/docs` que le
+  schéma liste bien vos colonnes, et remplacez `duration` par une de vos colonnes dans les
+  requêtes écrites à la main.
+- **Journal de bord** (`docs/journal.md`) : une entrée pour cette séance.
+- **ADR conseillé** : pourquoi le modèle est copié dans l'image au build, et pourquoi ONNX plutôt
+  que pickle.
 
 ## Mission autonome (25 min, 4 points)
 

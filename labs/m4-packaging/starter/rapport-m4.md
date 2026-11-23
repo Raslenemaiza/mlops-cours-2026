@@ -32,4 +32,4 @@ TODO : quelle image retenir en production pour ce cas d'usage, et pourquoi ?
 
 ## 5. Pistes d'amélioration
 
-- TODO (quantization INT8, image distroless, …)
+- TODO : un changement proposé, et la mesure qui prouverait qu'il marche.
