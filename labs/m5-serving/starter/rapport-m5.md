@@ -38,7 +38,7 @@ Scale-to-zero : délai observé avant 0 pod : TODO s · démarrage à froid (`cu
 
 ## 5. Points d'amélioration
 
-- TODO (cible de l'autoscaler, métrique de scaling, maxReplicas, ressources, batching…)
+- TODO : un changement proposé, et la mesure qui prouverait qu'il marche.
 
 ## 6. (Optionnel) Comparatif des serveurs et bonus batch
 
