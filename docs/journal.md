@@ -1,4 +1,4 @@
-# Journal de bord du binôme
+# Journal de bord (monôme)
 
 <!--
 Mode d'emploi (à garder en tête du fichier) :
@@ -13,17 +13,10 @@ Mode d'emploi (à garder en tête du fichier) :
   quand vous aurez écrit la vôtre.
 -->
 
-**Binôme :** [À compléter : @pseudo-github-1 (Prénom Nom), @pseudo-github-2 (Prénom Nom)]
-**Repo :** [À compléter : https://github.com/VOTRE_USER/mlops-cours-2026]
-**Dataset :** [À compléter : german-credit (fil rouge) ou nom du dataset validé + lien de l'issue]
-**Extensions :** [À compléter au plus tard en fin de S5 : @pseudo-1 → ext/<nom> · @pseudo-2 → ext/<nom>]
-
-## S0 — AAAA-MM-JJ — Exemple d'entrée (à supprimer)
-
-- **Pilote / copilote :** @alice / @bob
-- **Fait :** Lab 1 étapes 1 à 5 ; `dvc push` OK ; premier run MLflow dans l'expérience `scoring` (#3).
-- **Bloqué / appris :** `dvc push` refusé (identifiants absents de `.dvc/config.local`, corrigé).
-- **Prochaine étape :** Bob pilote le Lab 1 étapes 6-8 ; ouvrir l'ADR 0001 (métrique de promotion).
+**Monôme :** @Raslenemaiza (Raslene Maiza) — travail individuel, organisation de type option B
+**Repo :** https://github.com/Raslenemaiza/mlops-cours-2026
+**Dataset :** german-credit (fil rouge du cours)
+**Extension :** à confirmer avec l'enseignante (piste : @Raslenemaiza → ext/gate-equite)
 
 <!-- Vos entrées commencent ici. Modèle :
 
@@ -35,3 +28,10 @@ Mode d'emploi (à garder en tête du fichier) :
 - **Prochaine étape :**
 
 -->
+
+## S1 — 2026-11-26 — Lab 0 : setup (rattrapage)
+
+- **Pilote / copilote :** @Raslenemaiza (seul)
+- **Fait :** VM du cours recréée (6 Go, 4 vCPU), cluster kind 3 nœuds, SeaweedFS + MLflow, `uv sync`, smoke tests MLflow et DVC ; `make check-m0` 19/19 ; PR #1 fusionnée.
+- **Bloqué / appris :** ancienne VM VirtualBox « inaccessible » qui bloquait `vagrant up` (désenregistrée) ; PC à 7,8 Go de RAM avec Hyper-V actif (VM lente, suffisant pour les Labs 0-1 seulement) ; première PR ouverte par erreur vers le repo du cours (fermée) : vérifier la *base repository*.
+- **Prochaine étape :** Lab 1 (DVC + MLflow sur German Credit) ; demander à l'enseignante une solution de repli matérielle pour le Lab 2+ et valider l'extension.
