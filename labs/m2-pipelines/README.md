@@ -294,8 +294,8 @@ s'en accommoder :
 On choisit **(b)**. Le code du Lab 1 existe déjà, il est testé et piloté par
 `dataset.yaml` : le recopier dans des composants créerait une deuxième version à maintenir
 (un `prepare.py` pour DVC, un autre pour KFP), qui divergerait au premier changement. Avec une
-image projet, DVC, KFP, Airflow et plus tard la CI (Lab 6) exécutent **le même code**, et
-l'image versionnée (`:1.0.0`) devient l'unité de livraison, comme au Lab 4 pour l'API.
+image projet, DVC, KFP et Airflow exécutent **le même code**, et l'image versionnée (`:1.0.0`)
+devient l'unité de livraison.
 
 Chaque composant fait alors exactement ce que fait une stage de `dvc.yaml` : récupérer ses
 entrées, lancer une commande, publier ses sorties. Seul le transport change :
@@ -314,9 +314,8 @@ Quatre fichiers à écrire : un script de validation (2.2), le pont entre orches
 ### 2.2 Un nouveau script : la validation des données
 
 Le pipeline du cours commence par un **gate** : si le fichier brut ne respecte pas le contrat
-`dataset.yaml`, on s'arrête avant d'entraîner quoi que ce soit (fail-fast). Pour l'instant,
-des contrôles de schéma simples ; le Lab 3 les remplacera par une suite Great Expectations,
-sans changer la façon de lancer le script.
+`dataset.yaml`, on s'arrête avant d'entraîner quoi que ce soit (fail-fast). Ici,
+des contrôles de schéma volontairement simples.
 
 ```python
 # Fichier : src/validate_data.py
@@ -325,8 +324,7 @@ sans changer la façon de lancer le script.
 Gate du pipeline (Lab 2) : si un contrôle échoue, le script sort avec le code 1 et
 l'orchestrateur (DVC, Kubeflow, Airflow, CI) s'arrête AVANT l'entraînement. Les contrôles
 sont des contrôles de schéma simples, tous déduits de dataset.yaml (aucun nom de colonne
-en dur). Le Lab 3 les remplacera par une suite Great Expectations, sans changer
-l'interface :
+en dur). L'interface :
 
     python -m src.validate_data [fichier.csv]      (défaut : raw_path de dataset.yaml)
 
@@ -661,7 +659,7 @@ COPY pipelines/__init__.py pipelines/stage.py pipelines/
 
 # src et pipelines importables depuis n'importe quel dossier, dataset.yaml trouvé partout.
 # Pas d'utilisateur non-root ici : le lanceur KFP écrit les artefacts sous /minio, /s3…
-# à la racine du conteneur (le Lab 4 durcira l'image de serving).
+# à la racine du conteneur.
 ENV PYTHONPATH=/app \
     DATASET_CONFIG=/app/dataset.yaml \
     PYTHONUNBUFFERED=1
@@ -701,8 +699,7 @@ docker run --rm localhost:5001/scoring-pipeline:1.0.0 python -c \
 > **Sortie attendue :** un build de 1 à 2 minutes la première fois (installation des
 > dépendances), quelques secondes ensuite tant que `requirements.txt` ne change pas. Puis
 > `{"name":"scoring-pipeline","tags":["1.0.0"]}` et `german-credit 20`. L'image pèse environ
-> 650 Mo (`docker images localhost:5001/scoring-pipeline`) : on n'a pas cherché à la réduire,
-> le Lab 4 le fera pour l'image de serving.
+> 650 Mo (`docker images localhost:5001/scoring-pipeline`) : on n'a pas cherché à la réduire.
 
 > [!NOTE]
 > **Pourquoi pousser dans le registry ?**
@@ -1135,8 +1132,8 @@ kubectl -n kubeflow get pods -w | grep scoring
 
 > [!TIP]
 > **Soumettre un run sans l'UI**
-> Le SDK pilote la même API que l'UI (à travers le port-forward de l'étape 1.3). C'est ce
-> qu'utilisera la CI au Lab 6 :
+> Le SDK pilote la même API que l'UI (à travers le port-forward de l'étape 1.3). Le même
+> appel, depuis un script :
 > ```bash
 > python - <<'EOF'
 > import kfp
@@ -1838,7 +1835,7 @@ fusionnez, puis vous revenez sur `main` : `git switch main && git pull`.
 
 - **Le gate visible dans le DAG** : remplacer la promotion conditionnelle de `src.promote`
   par une branche KFP, `with dsl.If(eval_task.output >= seuil): …`, pour voir la décision
-  dans l'UI (le Lab 6 comparera challenger et champion).
+  dans l'UI.
 - **Parallélisme** : entraîner plusieurs modèles en parallèle avec
   `dsl.ParallelFor(["logistic_regression", "random_forest"])`, puis garder le meilleur.
 - **Planification** : un *Recurring run* KFP (cron `0 3 * * *`) ou `schedule="0 3 * * *"`
@@ -1851,14 +1848,6 @@ fusionnez, puis vous revenez sur `main` : `git switch main && git pull`.
   [KFP — exécution locale](https://www.kubeflow.org/docs/components/pipelines/user-guides/core-functions/execute-kfp-pipelines-locally/),
   [Airflow — Docker Compose](https://airflow.apache.org/docs/apache-airflow/stable/howto/docker-compose/index.html),
   [KubernetesPodOperator](https://airflow.apache.org/docs/apache-airflow-providers-cncf-kubernetes/stable/operators.html).
-
-> [!NOTE]
-> **Prochaine étape**
-> Module 3 — Validation des données et des modèles. Vous remplacerez les contrôles simples de
-> `src/validate_data.py` par une suite Great Expectations (même interface, même gate dans le
-> pipeline), puis vous ajouterez une détection de drift et des tests du modèle (Evidently et
-> tests comportementaux) comme nouveaux steps de `scoring-pipeline`. Nouvelle étape = nouvelle
-> version de l'image.
 
 ## Vérification automatique
 

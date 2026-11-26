@@ -4,7 +4,7 @@ lab: 4
 title: "Packager le modèle de scoring en image Docker"
 subtitle: "Du modèle MLflow à l'image optimisée et scannée"
 running_title: "Lab 4 — Packaging du modèle"
-duree: "2 heures (atelier guidé)"
+duree: "1 h 15 en séance (étapes 1 à 4) + fin en autonomie"
 stack: "Docker · ONNX · FastAPI · Trivy · ModelScan · BentoML"
 prerequis: "Lab 1 réussi : modèle scoring-model@champion dans le Registry MLflow"
 livrable: "Image Docker < 500 Mo dans le registry local + benchmark + rapports de scan"
@@ -31,6 +31,63 @@ pour la production.*
 > - L'image **poussée sur le registry local** `localhost:5001` et récupérable, par vous comme par
 >   le cluster.
 
+## Les notions du lab en 10 minutes (à lire avant de commencer)
+
+Depuis le Lab 1, le modèle vit dans le Registry MLflow. Pour s'en servir, il faut Python, les
+bonnes versions de scikit-learn et de numpy, et un accès à MLflow. Ce lab le transforme en une
+**image Docker** autonome : elle contient le modèle, son environnement et une API HTTP, et elle
+tourne de la même façon partout.
+
+![Le Lab 4 en un coup d'œil](img/00-lab4-flux.png)
+
+**ONNX** est un format neutre : le pipeline scikit-learn (prétraitement compris) devient un graphe
+d'opérations qu'**ONNX Runtime** exécute sans scikit-learn. Avant de lui faire confiance, on
+vérifie qu'il donne **les mêmes probabilités** que le modèle d'origine.
+
+Une **image** est une pile de **couches** : une par instruction du Dockerfile. Un Dockerfile
+**multi-stage** installe les dépendances dans une première image (*builder*) et ne copie que le
+résultat dans l'image finale : outils de build, caches et fichiers inutiles restent dehors.
+
+![Une image est une pile de couches](img/01-couches.png)
+
+Pour comparer deux façons de servir le modèle, on mesure la **latence** sur 1 000 appels et on lit
+des **percentiles** : P50 (la médiane), P95, P99. Une moyenne cache les appels lents ; un
+percentile les montre.
+
+![Lire une latence](img/02-latence.png)
+
+Enfin, une image et un modèle se **scannent** avant d'être publiés : **Trivy** cherche les
+vulnérabilités connues (**CVE**) des paquets de l'image, **ModelScan** cherche du code dangereux
+caché dans un fichier pickle.
+
+![Ce qu'on charge, ce qu'on scanne](img/03-securite.png)
+
+| Mot | En une phrase |
+|---|---|
+| Image / conteneur | L'image est le modèle de boîte (fichiers figés) ; le conteneur est une boîte qui tourne. |
+| Couche (*layer*) | Ce qu'ajoute une instruction du Dockerfile ; toutes les couches comptent dans la taille. |
+| Multi-stage | Plusieurs `FROM` dans un Dockerfile : on construit dans l'un, on ne garde que l'utile dans le dernier. |
+| ONNX / ONNX Runtime | Un format de modèle neutre / le moteur qui l'exécute, sans les bibliothèques d'entraînement. |
+| Non-root | Le processus de l'API tourne avec un utilisateur sans privilèges (UID 10001). |
+| P50, P95, P99 | La latence sous laquelle se trouvent 50 %, 95 %, 99 % des appels. |
+| CVE | Une vulnérabilité connue et numérotée d'un logiciel (par exemple `CVE-2026-33634`). |
+| Registry | Le dépôt d'images (`localhost:5001` dans le cours) : on y pousse, on en tire. |
+
+> [!IMPORTANT]
+> **Au début de la séance (5 min)**
+>
+> ```bash
+> cd ~/mlops-cours-2026
+> git fetch upstream && git checkout upstream/main -- Makefile infra labs
+> git commit -m "Mise à jour du cours"          # « rien à commiter » : passez à la suite
+> (cd infra/airflow && docker compose down)      # Airflow n'est pas utilisé ici
+> df -h /                                         # au moins 10 Go libres (images ≈ 3 Go)
+> make pf && curl -s localhost:5000/health; echo  # OK : MLflow répond
+> ```
+>
+> Ce lab ne dépend que du Lab 1 (le modèle `champion`) : un binôme en retard sur les Labs 2 et 3
+> peut le faire, puis revenir à ses labs en retard.
+
 ## Plan du lab
 
 | # | Étape | Durée |
@@ -44,6 +101,9 @@ pour la production.*
 | 7 | Scan sécurité : Trivy + ModelScan | 10 min |
 | 8 | Push sur registry local + test pull | 10 min |
 | 9 | Rédiger le rapport de benchmark | 5 min |
+
+En séance (1 h 15) : les étapes 1 à 4. Les étapes 5 à 9 et la mission autonome se terminent en
+autonomie, avant la date de rendu.
 
 > [!WARNING]
 > **Prérequis actifs**
@@ -119,11 +179,11 @@ mv = MlflowClient().get_model_version_by_alias('scoring-model', 'champion'); \
 print(mv.name, mv.version, mv.run_id)"
 ```
 
-> **Sortie attendue :** `scoring-model <N> 0ebb5feb4e4148f7aec9a9064654fc1a`. `<N>` est le numéro
-> de version de votre champion actuel : au moins 7, puisque les Labs 2 et 3 enregistrent une
-> version à chaque run de pipeline ; votre `run_id` est différent. Le modèle, lui, est toujours
-> la régression logistique de `params.yaml` (seuil de décision 0,318). Partout dans ce lab et le
-> suivant, `<N>` désigne ce numéro.
+> **Sortie attendue :** `scoring-model <N> <run_id>`. `<N>` est le numéro de version de votre
+> champion actuel : il augmente à chaque run des Labs 2 et 3 (au moins 7 si vous les avez faits) ;
+> le `run_id` est propre à votre run. Le modèle, lui, est toujours
+> la régression logistique de `params.yaml` (seuil de décision 0,318). Partout dans ce lab, `<N>`
+> désigne ce numéro.
 
 Arborescence à la fin du lab :
 
@@ -397,13 +457,13 @@ uv run python packaging/app/verify_onnx.py
 > **Choix d'architecture : le modèle est figé dans l'image au build**
 > On aurait pu laisser l'API télécharger `models:/scoring-model@champion` au démarrage. On
 > préfère exporter le modèle **avant** le `docker build` et le copier dans l'image : (1) une image
-> = une version du modèle, immuable — le tag `1.0.0` désigne toujours le même modèle et le
-> rollback du Lab 5 consiste à redéployer l'image précédente ; (2) le conteneur démarre sans
-> réseau ni MLflow, donc vite et même si MLflow est en panne (crucial quand l'autoscaling crée
-> des pods à la volée) ; (3) aucun accès au Registry à donner aux pods ; (4) ce que Trivy et
+> = une version du modèle, immuable — le tag `1.0.0` désigne toujours le même modèle, et revenir
+> en arrière consiste à redéployer l'image précédente ; (2) le conteneur démarre sans
+> réseau ni MLflow, donc vite et même si MLflow est en panne (utile quand on démarre beaucoup
+> de conteneurs d'un coup) ; (3) aucun accès au Registry à donner aux pods ; (4) ce que Trivy et
 > ModelScan analysent est exactement ce qui tourne ; (5) l'image n'embarque ni MLflow ni
 > scikit-learn (plusieurs centaines de Mo). Contrepartie : il faut reconstruire l'image à chaque
-> nouveau modèle — c'est précisément ce qu'automatisera la CI/CD du Module 6.
+> nouveau modèle. À la main, combien de temps et combien d'erreurs possibles ?
 
 ## Étape 2/9 — Écrire le serveur FastAPI (15 min)
 
@@ -420,7 +480,7 @@ Ce qui change par rapport à une API écrite pour un dataset précis :
   **422** détaillée. `null` est accepté : c'est une valeur manquante, que le graphe ONNX impute
   comme l'aurait fait le pipeline (médiane ou modalité la plus fréquente).
 - **Une ou plusieurs demandes** : le corps est `{"instances": [ ... ]}` (jusqu'à `MAX_BATCH`
-  demandes, 1 000 par défaut), comme le protocole v1 de KServe que vous verrez au Lab 5.
+  demandes, 1 000 par défaut).
 - **Réponse** : pour chaque demande, la probabilité de la classe positive (`bad` ici) et la
   décision au seuil (`prediction` = 1 si `probability >= threshold`), plus la version du modèle.
 - **numpy plutôt que pandas** dans `score()` : construire un DataFrame par requête coûtait
@@ -621,8 +681,7 @@ kill %1
 
 ### 2.3 Le contrat de l'API
 
-Les Labs 5 (KServe, Locust), 6 (CI/CD) et 7 (monitoring) s'appuient sur ce contrat : gardez-le
-stable.
+Ce contrat est la promesse faite à ceux qui appellent l'API : gardez-le stable.
 
 | Élément | Valeur |
 |---|---|
@@ -928,7 +987,7 @@ ONNX vs sklearn (P50, 1 row): x60.5
 Report written: reports/benchmark.md
 ```
 
-ONNX est typiquement **50 à 60× plus rapide** que scikit-learn en prédiction unitaire : pour une
+ONNX est typiquement **30 à 60× plus rapide** (selon la machine) que scikit-learn en prédiction unitaire : pour une
 seule ligne, le temps du pipeline scikit-learn est dominé par son surcoût fixe (validation du
 DataFrame, sélection des colonnes par leur nom, un appel Python par transformateur).
 
@@ -979,8 +1038,8 @@ docker stop scoring
 
 > **Sortie attendue :** résumé sans échec (`0(0.00%)`), de quelques centaines à environ 1 000
 > requêtes/s sur un laptop. La latence P95 (de l'ordre de 10 à 50 ms selon la machine) vient
-> surtout de la file d'attente de l'unique worker uvicorn, pas du modèle (0,07 ms) : c'est ce que
-> l'autoscaling du Lab 5 permettra d'absorber.
+> surtout de la file d'attente de l'unique worker uvicorn, pas du modèle (0,07 ms) . Comment absorber un trafic
+> plus fort ?
 
 ## Étape 6/9 — Variante BentoML (15 min)
 
@@ -1145,7 +1204,14 @@ docker images scoring-api --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}"
 Trivy tourne dans un conteneur, à la version épinglée dans `infra/versions.env` (`v0.75.0`,
 image `aquasec/trivy:0.75.0`) plutôt que `latest`, pour des résultats reproductibles. Le volume
 `trivy-cache` garde la base de vulnérabilités entre deux scans : elle n'est téléchargée qu'une
-fois.
+fois (plusieurs centaines de Mo : lancez le premier scan tôt).
+
+> [!WARNING]
+> **Épingler une version, c'est aussi une protection**
+> En mars 2026, l'outil de scan lui-même a été piégé : des images `aquasec/trivy` publiées sous les
+> tags `0.69.4`, `0.69.5`, `0.69.6` et `latest` contenaient un code malveillant (CVE-2026-33634).
+> Un pipeline qui tirait `latest` ces jours-là l'a exécuté. Une version épinglée, connue et
+> vérifiée, n'aurait pas bougé.
 
 ```bash
 trivy() {
@@ -1307,8 +1373,7 @@ docker stop scoring-from-reg
 ```
 
 > **Sortie attendue :** `{"status":"ok","model_loaded":true}`. L'image est taggée par version,
-> traçable (labels MLflow) et réutilisable par n'importe qui ayant accès au registry. C'est la
-> base du workflow CD du Module 6.
+> traçable (labels MLflow) et réutilisable par n'importe qui ayant accès au registry. 
 
 ### 8.4 Le cluster voit l'image (optionnel, 2 min)
 
@@ -1321,7 +1386,7 @@ kubectl delete pod scoring-smoke
 
 > **Sortie attendue :** `pod/scoring-smoke condition met` et les logs d'uvicorn
 > (`Uvicorn running on http://0.0.0.0:8000`) : le cluster a tiré l'image depuis le registry
-> local, sans `kind load`. C'est ainsi que le Lab 5 la déploiera avec KServe.
+> local, sans `kind load`.
 
 ## Étape 9/9 — Rédiger le rapport (5 min)
 
@@ -1338,11 +1403,11 @@ cp labs/m4-packaging/starter/rapport-m4.md reports/rapport-m4.md
 - **Interprétation** : pourquoi optimized est plus petite ? Pourquoi ONNX est plus rapide que
   scikit-learn ? Que montrent les scans ?
 - **Choix recommandé** : laquelle retenir en prod pour ce cas d'usage ? Justifier.
-- **Pistes d'amélioration** : quantization INT8, image distroless, préchargement du modèle dans
-  un Init Container…
+- **Pistes d'amélioration** : deux ou trois changements que vous proposeriez, et ce que vous
+  mesureriez pour prouver qu'ils marchent.
 
-Commitez ensuite le travail. `packaging/model/` (quelques ko à quelques Mo) est versionné : la CI
-du Module 6 pourra reconstruire l'image sans accès à votre MLflow. Les pickles de démonstration
+Commitez ensuite le travail. `packaging/model/` (quelques ko à quelques Mo) est versionné : n'importe qui
+peut reconstruire l'image sans accès à votre MLflow. Les pickles de démonstration
 sont exclus :
 
 ```bash
@@ -1379,7 +1444,7 @@ puis vous revenez sur `main` : `git switch main && git pull`.
 >
 > Ne relancez pas `export_onnx.py` pour « rattraper » : il exporterait **votre** champion (autre
 > numéro de version) et modifierait `packaging/model/`. Un nouveau modèle ne se commite que pour
-> être publié, par une PR (Lab 6). Rapports et pickles régénérés ne se commitent pas non plus.
+> être publié, par une PR. Rapports et pickles régénérés ne se commitent pas non plus.
 
 ### Checklist de validation
 
@@ -1406,15 +1471,62 @@ puis vous revenez sur `main` : `git switch main && git pull`.
 make check-m4
 ```
 
+## Lien avec le mini-projet
+
+- **Extensions : déclaration au plus tard à la fin de cette séance.** Une extension par étudiant,
+  deux extensions différentes dans un binôme, au plus 3 binômes par extension et par groupe
+  (premier déclaré, premier servi). Catalogue : `labs/m10-capstone/README.md`, section
+  « L'extension personnelle » ; déclaration par l'issue « Mini-projet : déclarer mon extension »
+  du repo du cours. Trois extensions prolongent directement ce lab : `onnx-quantifie`,
+  `supply-chain`, `batch-scoring`.
+- **L'image de votre projet** : ce lab produit l'API de scoring de votre mini-projet. C'est elle que
+  l'exigence « Projet en ligne » du guide met en ligne en HTTPS (`/health`, `/predict`, `/docs`,
+  `/metadata`) : gardez son contrat stable (étape 2.3).
+- **Dataset libre** : rien à changer dans le code, tout vient de `dataset.yaml`. Lisez l'encadré
+  « Vous travaillez sur votre propre dataset ? » au début du lab, vérifiez dans `/docs` que le
+  schéma liste bien vos colonnes, et remplacez `duration` par une de vos colonnes dans les
+  requêtes écrites à la main.
+- **Journal de bord** (`docs/journal.md`) : une entrée pour cette séance.
+- **ADR conseillé** : pourquoi le modèle est copié dans l'image au build, et pourquoi ONNX plutôt
+  que pickle.
+
+## Mission autonome (25 min, 4 points)
+
+**Une image encore plus légère.**
+
+Votre image `scoring-api` pèse environ 330 Mo. Réduisez-la d'**au moins 20 %** sans rien
+changer à ce qu'elle répond : mêmes probabilités sur `packaging/sample_request.py`, même
+`/health`, toujours non-root.
+
+Commencez par mesurer où partent les mégaoctets (couches de l'image, paquets installés), puis
+choisissez vos leviers. Si vous ne trouvez pas 20 %, documentez ce que vous avez obtenu et
+pourquoi vous êtes bloqués : une démarche bien menée vaut plus qu'un chiffre.
+
+**Règles communes**
+- Aucun code n'est fourni : à vous de trouver la démarche. Documentation officielle des outils,
+  code des labs précédents et `--help` autorisés.
+- Durée visée : 25 minutes en binôme. Les deux noms figurent dans le compte rendu.
+- Livrable : `reports/mission-m4.md`, commité dans la PR du lab, avec quatre sections :
+  1. **Le problème** : ce que vous avez trouvé, en une ou deux phrases ;
+  2. **La démarche** : ce que vous avez essayé, y compris ce qui n'a pas marché ;
+  3. **La preuve** : les commandes et les sorties, **avant** et **après** votre changement ;
+  4. **Les limites** : ce que votre solution ne couvre pas.
+- Tout ce que vérifiait déjà `make check-m4` doit rester vert.
+
+**Notation (4 points)** : mesure de départ et analyse de ce qui pèse (1) ; réduction obtenue et
+mesurée (1,5) ; preuve que les prédictions sont identiques et que l'image reste non-root (1) ;
+limites et compromis (0,5).
+
 ## Critères d'évaluation (noté sur 20)
 
 | Critère | Description | Points |
 |---|---|---|
-| Image fonctionnelle | Image optimized build + healthcheck OK + prédictions cohérentes (= scikit-learn), schéma d'entrée généré depuis `dataset.yaml`, 422 sur requête invalide. | 6 |
-| Optimisation taille | Image < 500 Mo, multi-stage, `.dockerignore`, user non-root. | 4 |
-| Benchmark | Script de benchmark + table P50/P95/P99 sur 3 backends. | 4 |
+| Image fonctionnelle | Image optimized build + healthcheck OK + prédictions cohérentes (= scikit-learn), schéma d'entrée généré depuis `dataset.yaml`, 422 sur requête invalide. | 5 |
+| Optimisation taille | Image < 500 Mo, multi-stage, `.dockerignore`, user non-root. | 3 |
+| Benchmark | Script de benchmark + table P50/P95/P99 sur 3 backends. | 3 |
 | Scan sécurité | Trivy + ModelScan lancés, rapports dans `reports/`. | 3 |
-| Rapport | 5 sections rédigées, analyse et recommandation claires. | 3 |
+| Rapport | 5 sections rédigées, analyse et recommandation claires. | 2 |
+| Mission autonome | Image réduite d'au moins 20 % avec prédictions identiques, démarche mesurée (`reports/mission-m4.md`). | 4 |
 | **Total** | | **20** |
 
 ## Annexe — Troubleshooting
@@ -1429,9 +1541,10 @@ make check-m4
 | `ModuleNotFoundError: No module named 'src'` | API lancée avec le script `uvicorn` au lieu de `python -m uvicorn`, ou hors de la racine du repo. | `uv run python -m uvicorn app.serve:app --app-dir packaging` depuis la racine du repo. |
 | `ImportError` sur `packaging.version`, pip ou MLflow cassés | Un `packaging/__init__.py` a été créé et masque le paquet PyPI `packaging`. | Supprimer `packaging/__init__.py` (voir l'encadré de l'étape 1.1). |
 | `422 Unprocessable Entity` | Corps invalide : colonne manquante (`missing`), inconnue (`extra_forbidden`), mauvais type, ou pas d'enveloppe `instances`. | Lire `detail` ; générer un corps valide avec `packaging/sample_request.py`. |
-| `docker build: no space left` | Cache Docker trop gros. | `docker system prune -af --volumes` (attention : supprime tout, y compris le volume `trivy-cache`). |
+| `docker build: no space left` | Disque de la VM plein (images Kubeflow, builds, cache de build). | `df -h /`, puis `docker builder prune -f` et `docker image prune -f` ; une fois le rapport écrit, `docker rmi scoring-api:naive`. **Jamais** `docker system prune -a` : si le cluster est arrêté, il supprimerait ses conteneurs (donc le cluster). |
 | `"/packaging/model/model.onnx": not found` au `COPY` | Modèle pas exporté, ou build lancé depuis `packaging/` au lieu de la racine. | `uv run python packaging/app/export_onnx.py`, puis `docker build -f packaging/Dockerfile … .` depuis la racine. |
-| Image bloque sur `pip install` | Pas d'accès réseau depuis le build. | Vérifier le proxy Docker Desktop. Pré-télécharger avec `docker pull python:3.12-slim`. |
+| Image bloque sur `pip install` | Pas d'accès réseau depuis le build, ou DNS de la VM. | `docker run --rm python:3.12-slim pip download fastapi -d /tmp` pour tester ; DNS : dépannage du Lab 0 (`ghcr.io` / DNS). |
+| Build ou benchmark très lents, VM qui rame | VirtualBox en mode lent (Hyper-V actif) ou Airflow encore lancé. | `Select-String … "fall back to NEM"` (dépannage du Lab 0) ; `(cd infra/airflow && docker compose down)`. |
 | `uvicorn: address already in use` | Port 8000 déjà utilisé (serveur de l'étape 2 ou conteneur encore actif). | `lsof -i:8000` + `kill`, `docker ps` + `docker stop`, ou changer de port (`--port 8001`, `-p 8001:8000`). |
 | Trivy : `unable to connect to Docker` | Socket Docker non monté. | Ajouter `-v /var/run/docker.sock:/var/run/docker.sock` au `docker run` (Docker Desktop : option « Allow the default Docker socket to be used »). |
 | Trivy : `TOOMANYREQUESTS` / téléchargement de la base très long | Limite de débit sur la base de vulnérabilités. | Garder le volume `trivy-cache` ; une fois la base en cache, ajouter `--skip-db-update`. |
@@ -1445,13 +1558,6 @@ make check-m4
 | Conteneur arrêté au démarrage : `NO_SUCHFILE` / `FileNotFoundError` sur `model.onnx` ou `dataset.yaml` | Fichier absent de l'image. | Vérifier les `COPY` du Dockerfile et la liste blanche de `packaging/Dockerfile.dockerignore`. |
 | ModelScan : `argument of type 'NoneType' is not iterable` | ModelScan 0.8.8 ne sait pas lire les pickles écrits par `joblib`. | Pour la démo, sérialiser avec `pickle` (c'est ce que fait `make_pickles.py`). |
 | ModelScan : `skipped` / code retour 3 | Format non pris en charge (ONNX, skops). | Normal : ce n'est pas une erreur (voir 7.2). |
-
-> [!NOTE]
-> **Prochaine étape**
-> Module 5 — Serving & inférence à l'échelle. Vous allez déployer l'image
-> `localhost:5001/scoring-api:1.0.0` sur Kubernetes avec KServe (InferenceService
-> `scoring-model` dans le namespace `scoring`), configurer l'autoscaling, et mesurer les
-> performances sous charge réelle.
 
 ## Vérification automatique
 

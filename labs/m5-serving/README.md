@@ -4,7 +4,7 @@ lab: 5
 title: "Déployer le modèle de scoring sur KServe"
 subtitle: "Autoscaling, canary, benchmark sous charge réelle"
 running_title: "Lab 5 — Serving avec KServe"
-duree: "3 heures (atelier guidé)"
+duree: "1 h 15 en séance (étapes 1 à 4) + fin en autonomie"
 stack: "KServe · Knative · Kourier · Locust · Triton · kind"
 prerequis: "Lab 4 réussi : image localhost:5001/scoring-api:1.0.0 dans le registry local"
 livrable: "ISVC déployé + benchmark P50/P95/P99 + canary 90/10"
@@ -31,6 +31,72 @@ et benchmark sous charge réelle.*
 > - Un rapport avec table de latences, scale-up observé et analyse du canary.
 > - En option : le même modèle servi par Triton et par BentoML, comparés au même banc d'essai.
 
+## Les notions du lab en 10 minutes (à lire avant de commencer)
+
+Au Lab 4, le modèle est devenu une image Docker qui tourne sur **un** poste, dans **un**
+conteneur. En production, il faut plus : que le service soit joignable par les autres
+applications, qu'il ajoute des copies quand la demande monte et les retire quand elle baisse, et
+qu'on puisse passer à une nouvelle version sans coupure ni risque. C'est le **serving**.
+
+![Le Lab 5 en un coup d'œil](img/00-lab5-flux.png)
+
+**KServe** ajoute à Kubernetes un nouveau type d'objet, l'**InferenceService** : on décrit le
+modèle à servir dans un YAML d'une vingtaine de lignes, et KServe crée tout le reste avec l'aide
+de **Knative** (révisions, routage, autoscaling). Toutes les requêtes entrent par une seule
+passerelle, **Kourier**, sur `localhost:30080` ; c'est l'en-tête HTTP `Host` qui dit à quel
+service les envoyer.
+
+![Ce que crée un InferenceService](img/01-isvc.png)
+
+Chaque modification du YAML crée une **révision** : une image et sa configuration, figées. La
+**route** répartit le trafic entre révisions : c'est ce qui permet le **canary** (10 % du trafic
+vers la nouvelle version, 90 % vers l'ancienne) et le retour arrière. L'**autoscaler** (KPA) mesure
+les requêtes par seconde et ajuste le nombre de pods, jusqu'à **zéro** quand personne n'appelle
+(*scale-to-zero*) ; l'**activator** retient alors la première requête le temps qu'un pod démarre.
+
+Pour savoir ce que le service supporte, on le charge avec **Locust** : des utilisateurs virtuels
+qui envoient des requêtes en boucle. On lit trois chiffres : le **débit** (requêtes par seconde,
+RPS), la **latence** (P50, P95, P99, comme au Lab 4) et le **taux d'erreur**. Quand le débit
+ne monte plus alors que les utilisateurs augmentent, le service est **saturé** : les requêtes
+font la queue et la latence explose.
+
+![Lire un test de charge](img/02-charge.png)
+
+Enfin, un canary 90/10 n'envoie pas exactement 1 requête sur 10 à la nouvelle version : chaque
+requête est un **tirage au sort**. Sur 200 appels, on en attend 20, mais 15 ou 26 sont tout aussi
+normaux. Savoir ce qui est normal évite de conclure trop vite.
+
+![Canary : du hasard mesuré](img/03-canary.png)
+
+| Mot | En une phrase |
+|---|---|
+| InferenceService (ISVC) | L'objet KServe qui décrit le modèle à servir : image, ressources, autoscaling, trafic. |
+| Knative | La couche qui gère révisions, routes et autoscaling, jusqu'à zéro pod. |
+| Kourier | La passerelle HTTP unique ; l'en-tête `Host` désigne le service visé. |
+| Révision | Une version figée du service (image + configuration). |
+| KPA | L'autoscaler de Knative : il vise un nombre de requêtes/s par pod. |
+| Scale-to-zero | Plus aucun pod sans trafic ; le premier appel attend un **démarrage à froid**. |
+| RPS | *Requests per second* : le débit du service. |
+| Canary | Une nouvelle version qui reçoit d'abord une petite part du trafic. |
+
+> [!IMPORTANT]
+> **Au début de la séance (5 min)**
+>
+> ```bash
+> cd ~/mlops-cours-2026
+> git fetch upstream && git checkout upstream/main -- Makefile infra labs
+> git commit -m "Mise à jour du cours"          # « rien à commiter » : passez à la suite
+> (cd infra/airflow && docker compose down)      # Airflow n'est pas utilisé ici (≈ 4 Go)
+> kubectl -n kubeflow scale deploy --all --replicas=0   # Kubeflow en pause (repart avec --replicas=1)
+> free -g && df -h /                              # ≥ 4 Go disponibles, ≥ 10 Go de disque libre
+> make pf && curl -s localhost:5000/health; echo  # OK : MLflow répond
+> curl -s http://localhost:5001/v2/scoring-api/tags/list; echo   # le tag 1.0.0 du Lab 4
+> ```
+>
+> **Pas de tag `1.0.0` dans le registry ?** Le Lab 4 n'est pas terminé. Faites d'abord, dans le
+> Lab 4, l'étape 1 (export ONNX), l'étape 4 (image multi-stage) et l'étape 8 (push dans le
+> registry) : environ 30 minutes. Le reste du Lab 4 peut attendre.
+
 ## Plan du lab
 
 | # | Étape | Durée |
@@ -45,13 +111,16 @@ et benchmark sous charge réelle.*
 | 8 | (Optionnel) Triton et BentoML : comparer les serveurs | 20 min |
 | 9 | Rédiger le rapport | 10 min |
 
+En séance (1 h 15) : les étapes 1 à 4 (lancez `make kserve` dès le début : 5 à 10 minutes de
+téléchargements). Les étapes 5 à 9 et la mission se terminent en autonomie, avant la date de rendu.
+
 > [!WARNING]
 > **Ressources requises**
 > Knative, Kourier, cert-manager et KServe ajoutent ≈ 1,5 Go de RAM au cluster, sans compter
-> les pods du modèle. Allouez au moins 8 Go de RAM à Docker (Docker Desktop : Settings >
-> Resources) et fermez ce qui n'est pas essentiel. Ne recréez **pas** le cluster pour lui donner
-> plus de ressources : SeaweedFS et MLflow y vivent depuis le Lab 0. Libérez plutôt la RAM des
-> labs précédents : Airflow (Lab 2) s'arrête avec `(cd infra/airflow && docker compose down)`
+> les pods du modèle. La VM doit avoir 12 Go (`VM_MEMORY=12288`, comme depuis le Lab 2), et
+> VirtualBox doit tourner en mode rapide (pas de « fall back to NEM » dans `VBox.log`, voir le
+> dépannage du Lab 0). Ne recréez **pas** le cluster pour lui donner plus de ressources :
+> SeaweedFS et MLflow y vivent depuis le Lab 0. Libérez plutôt la RAM des labs précédents : Airflow (Lab 2) s'arrête avec `(cd infra/airflow && docker compose down)`
 > (≈ 4 Go), Kubeflow Pipelines se met en pause avec
 > `kubectl -n kubeflow scale deploy --all --replicas=0` (et repart avec `--replicas=1`).
 
@@ -92,10 +161,9 @@ première ligne est `# Fichier : chemin` est le contenu **complet** de ce fichie
 
 ### 1.1 Le cluster du Lab 0, tel quel
 
-L'ancienne version de ce lab supprimait le cluster et en recréait un pour mapper le port
-30080. C'est inutile : `infra/kind/kind-config.yaml` mappe ce port depuis le Lab 0, précisément
-pour la passerelle de KServe. Et ce serait destructeur : le stockage S3 (SeaweedFS) et MLflow
-vivent dans ce cluster.
+Inutile de recréer le cluster : `infra/kind/kind-config.yaml` mappe le port 30080 depuis le
+Lab 0, précisément pour la passerelle de KServe. Et ce serait destructeur : le stockage S3
+(SeaweedFS) et MLflow vivent dans ce cluster.
 
 ```bash
 cd ~/mlops-cours-2026
@@ -129,7 +197,7 @@ Le script `infra/kserve/install.sh` installe, dans cet ordre :
 | metrics-server | `v0.9.0` | `kube-system` | `kubectl top`, métriques CPU / mémoire des pods |
 | KEDA (option) | `v2.21.0` | `keda` | autoscaling événementiel, voir « Pour aller plus loin » |
 
-Ce que le script fait de plus que les commandes `kubectl apply` de l'ancien énoncé :
+Ce que le script fait, en plus des `kubectl apply` des manifests officiels :
 
 - **Kourier au lieu d'Istio** comme couche réseau de Knative : une seule passerelle Envoy au lieu
   d'un maillage de services complet, bien plus léger sur un poste. Knative est configuré pour
@@ -183,7 +251,7 @@ kubectl get svc kourier -n kourier-system
 
 > [!NOTE]
 > **Pourquoi le mode Knative, et plus RawDeployment ?**
-> KServe 0.21 propose deux modes de déploiement, renommés depuis l'ancien énoncé :
+> KServe 0.21 propose deux modes de déploiement :
 >
 > | | Standard (ex-« RawDeployment ») | Knative (ex-« Serverless ») |
 > |---|---|---|
@@ -193,19 +261,18 @@ kubectl get svc kourier -n kourier-system
 > | Accès depuis le poste | port-forward, ou contrôleur d'Ingress / Gateway | passerelle Kourier, port 30080 |
 > | Coût | rien de plus | Knative + Kourier (≈ 1 Go) |
 >
-> L'ancien énoncé choisissait RawDeployment parce qu'Istio était lourd et que kind n'a pas de
-> LoadBalancer ; il perdait au passage le scale-to-zero et son canary ne fonctionnait pas (son
-> propre tableau de dépannage le reconnaissait : « 100/0 au lieu de 90/10 »). Avec Kourier et le
-> port 30080 mappé au Lab 0, ces deux raisons disparaissent : on garde le mode Knative, qui
-> donne le scale-to-zero et le canary dont ce lab a besoin. Le mode est fixé à la création d'un
+> Le mode Standard évite Knative, mais perd le scale-to-zero, et son canary ne sert que les
+> modèles téléchargés depuis un stockage. Avec Kourier, léger, et le port 30080 mappé au Lab 0,
+> le mode Knative ne coûte presque rien de plus : on le garde, pour le scale-to-zero et le canary
+> dont ce lab a besoin. Le mode est fixé à la création d'un
 > InferenceService et ne peut plus changer ensuite.
 
 ## Étape 2/9 — Rendre l'image disponible pour le cluster (10 min)
 
 ### 2.1 Plus de `kind load` : le registry du cours
 
-L'ancien énoncé chargeait l'image dans les nœuds avec `kind load docker-image`. Depuis le Lab 0,
-le registry `localhost:5001` est branché au cluster : les nœuds tirent eux-mêmes les images
+Pas besoin de `kind load docker-image` : depuis le Lab 0, le registry `localhost:5001` est
+branché au cluster : les nœuds tirent eux-mêmes les images
 `localhost:5001/...`, comme l'a montré l'étape 8.4 du Lab 4.
 
 ```bash
@@ -344,8 +411,7 @@ curl -s -X POST http://localhost:30080/predict -H "Host: ${ISVC_HOST}" \
 
 > **Sortie attendue :**
 > `{"model_version":"<N>","positive_class":"bad","threshold":0.3182,"predictions":[{"probability":0.5091253519058228,"prediction":1},{"probability":0.2659958302974701,"prediction":0}]}`,
-> où `<N>` est la version du Registry exportée au Lab 4 (votre champion, au moins la 7 après
-> les Labs 2 et 3).
+> où `<N>` est la version du Registry exportée au Lab 4 (votre champion).
 > La première demande a un score de risque de 0,51, au-dessus du seuil de 0,318 : elle est
 > classée à risque (`1`) ; la seconde (0,27) est acceptée (`0`). Ce sont exactement les valeurs
 > du conteneur Docker du Lab 4 : même image, même modèle.
@@ -382,8 +448,7 @@ curl -s -H "Host: ${ISVC_HOST}" http://localhost:30080/metadata | python3 -m jso
 
 ### 4.4 Depuis un pod du cluster (2 min)
 
-Les autres services du cluster (le pipeline du Lab 6, le générateur de trafic du Lab 7)
-appellent le modèle par son adresse interne, sans passer par le port 30080 :
+Les autres services du cluster appellent le modèle par son adresse interne, sans passer par le port 30080 :
 
 ```bash
 kubectl run -n scoring client-test --rm -i --restart=Never --image=python:3.12-slim -- \
@@ -461,7 +526,7 @@ kubectl get revision scoring-model-predictor-00002 -n scoring \
 > | Réaction | 15 s à 2 min | quelques secondes (mode panique) | quelques secondes |
 > | Dans KServe 0.21 | mode Standard, `autoscalerClass: hpa` | mode Knative (défaut) | mode Standard, `autoscalerClass: keda` |
 >
-> L'ancien énoncé ciblait 60 % de CPU avec un HPA. Pour cette API très légère, le CPU est un
+> Pourquoi pas 60 % de CPU avec un HPA ? Pour cette API très légère, le CPU est un
 > mauvais signal : le goulot est l'unique worker uvicorn, saturé bien avant que le pod
 > n'atteigne sa limite d'un CPU. Le débit (ou la concurrence) mesure directement ce qui compte.
 > KEDA brille quand la charge vient d'une file de messages ; il s'installe avec
@@ -535,8 +600,7 @@ curl -s -o /dev/null -w "HTTP %{http_code} en %{time_total} s\n" \
 
 ### 6.1 Préparer Locust
 
-Locust 2.46.6 fait partie du socle (`uv sync`) : rien à installer. Contrairement à l'ancien
-scénario, qui tirait des valeurs au hasard dans des colonnes écrites en dur, les requêtes rejouent
+Locust 2.46.6 fait partie du socle (`uv sync`) : rien à installer. Les requêtes rejouent
 de **vraies demandes** de `data/processed/test.csv`, colonnes lues dans `dataset.yaml`. Les corps
 de requête sont construits par un petit module partagé, réutilisé par le client V2 de l'étape 8 :
 
@@ -650,8 +714,8 @@ class PredictUser(HttpUser):
 
 Chaque utilisateur virtuel enchaîne des requêtes `/predict` en attendant 0,1 à 0,3 s entre deux :
 100 utilisateurs envoient donc ≈ 450 requêtes/s. Locust ajoute lui-même le dossier du
-locustfile au chemin d'import, d'où le simple `from payloads import …`. L'ancien scénario
-appelait aussi `/health` une fois sur deux : on ne mesure ici que les requêtes de scoring.
+locustfile au chemin d'import, d'où le simple `from payloads import …`. On ne mesure que les
+requêtes de scoring (`/predict`), pas `/health`.
 
 ### 6.2 Trois runs progressifs
 
@@ -752,17 +816,19 @@ uv run python serving/locust_report.py
 ```
 
 > **Sortie attendue :** un tableau Markdown de trois lignes (`run_100`, `run_500`, `run_1000`) :
-> requêtes, RPS, P50, P95, P99 et taux d'erreur. Ordres de grandeur sur un laptop 8 cœurs :
+> requêtes, RPS, P50, P95, P99 et taux d'erreur. Ordres de grandeur sur un poste 8 cœurs :
 > ≈ 440 requêtes/s et un P99 < 100 ms au run 1 ; un débit qui plafonne vers 800-1 000
-> requêtes/s aux runs 2 et 3, avec un P99 qui explose au run 3.
+> requêtes/s aux runs 2 et 3, avec un P99 qui explose au run 3. Dans la VM du cours (4 vCPU
+> partagés entre le cluster **et** Locust), le plafond arrive plus tôt : c'est normal, notez vos
+> propres chiffres.
 
 > [!IMPORTANT]
 > **Ce qu'il faut repérer**
 > La saturation : au run 1000, le P99 explose par rapport au run 500 alors que le RPS ne monte
-> presque plus. C'est votre RPS max. Au-delà, soit on augmente `maxReplicas`, soit on rend chaque
-> pod plus efficace (plusieurs workers uvicorn, batching). Pour ce modèle (0,07 ms d'inférence
-> ONNX), un pod tient quelques centaines de requêtes/s : le coût est dans HTTP, JSON et Python,
-> pas dans le modèle (Lab 4, étape 5).
+> presque plus. C'est votre RPS max. Pour ce modèle (0,07 ms d'inférence ONNX), un pod tient
+> quelques centaines de requêtes/s : le coût est dans HTTP, JSON et Python, pas dans le modèle
+> (Lab 4, étape 5). Qu'est-ce qui limite votre service : le nombre de pods, ce que fait chaque
+> pod, ou le générateur de charge ?
 
 ### 6.4 Bonus : le pattern batch
 
@@ -802,7 +868,7 @@ puis ajoutez cette route juste après celle de `/metadata` :
 ```python
 @app.get("/version")
 def version():
-    # Lab 5 : quelle version a répondu ? (canary, rollback, tests de fumée du Lab 6)
+    # Lab 5 : quelle version a répondu ? (canary, rollback)
     return {"version": API_VERSION, "model_version": MODEL_VERSION}
 ```
 
@@ -934,9 +1000,8 @@ kubectl get isvc scoring-model -n scoring
 > Un vrai canary en production combine : traffic splitting (ici) + surveillance automatique
 > des métriques (taux d'erreur, latence, distribution des scores) + rollback automatique en cas
 > de dégradation. Ici, la décision et le `kubectl patch` sont manuels, et l'état du cluster
-> s'éloigne de ce qui est dans Git. Les Modules 6 et 7 automatisent tout cela : le changement de
-> version passe par un commit (GitOps avec Argo CD), et la progression du canary aussi, par des
-> commits (canary KServe piloté par Git, Lab 6), décidée au Lab 7 par l'analyse des métriques.
+> s'éloigne de ce qui est dans Git. Comment garder la trace de chaque changement
+> de version, et décider de la progression du canary sur des faits plutôt qu'à l'œil ?
 
 ## Étape 8/9 — (Optionnel) Triton et BentoML : comparer les serveurs (20 min)
 
@@ -1300,8 +1365,8 @@ cp labs/m5-serving/starter/rapport-m5.md reports/rapport-m5.md
 - **Scale-up observé** : nombre de pods à chaque run, CPU moyen, temps de scale-up en secondes ;
   délai de scale-to-zero et démarrage à froid.
 - **Analyse canary** : répartition observée v1/v2, conclusion sur la cohérence du split.
-- **Points d'amélioration** : ajuster la cible de l'autoscaler, changer de métrique
-  (concurrence), plusieurs workers par pod, batching, Triton, etc.
+- **Points d'amélioration** : deux ou trois changements que vous proposeriez, et la mesure
+  qui prouverait qu'ils marchent.
 - (Optionnel) **Comparatif des serveurs** de l'étape 8 et bonus batch.
 
 Commitez ensuite le travail (les rapports HTML de Locust, ≈ 1 Mo chacun, restent sur votre
@@ -1369,15 +1434,57 @@ fusionnez, puis vous revenez sur `main` : `git switch main && git pull`.
 make check-m5
 ```
 
+## Lien avec le mini-projet
+
+- **Votre service en ligne** : le guide du mini-projet demande une API joignable en HTTPS
+  (`/health`, `/predict`, `/docs`, `/metadata`). Ce lab montre comment un service se déploie,
+  s'adapte à la charge et change de version sans coupure : notez dans `docs/journal.md` ce que
+  vous garderez pour votre projet (ressources, nombre minimal de pods, temps de démarrage).
+- **Extensions liées à ce lab** : `scale-to-zero`, `batch-scoring`, `shadow`, `ab-test`,
+  `onnx-quantifie`. Si votre extension en fait partie, ce lab vous donne son point de départ :
+  gardez vos mesures (rapports Locust, temps de démarrage) comme « avant ».
+- **Dataset libre** : rien à changer dans les manifests ni dans le code (encadré au début du
+  lab) ; vos chiffres seront différents.
+- **Journal de bord** : une entrée pour cette séance.
+- **ADR conseillé** : `minReplicas` 0 ou 1 pour votre service (coût contre démarrage à froid),
+  et la règle qui vous fait promouvoir ou annuler un canary.
+
+## Mission autonome (25 min, 4 points)
+
+**Tenir la charge mieux, sans changer de machine.**
+
+Reprenez le run Locust le plus chargé de l'étape 6. Trouvez **un changement de configuration**
+de votre InferenceService (autoscaling, ressources, concurrence, nombre minimal de répliques…)
+qui améliore la latence P95 ou le taux d'erreur **d'au moins 25 %**, à charge égale.
+
+Formulez d'abord une hypothèse sur ce qui limite les performances, puis changez **un seul
+paramètre à la fois**. Gardez la trace de chaque essai, même ceux qui n'améliorent rien.
+
+**Règles communes**
+- Aucun code n'est fourni : à vous de trouver la démarche. Documentation officielle des outils,
+  code des labs précédents et `--help` autorisés.
+- Durée visée : 25 minutes en binôme. Les deux noms figurent dans le compte rendu.
+- Livrable : `reports/mission-m5.md`, commité dans la PR du lab, avec quatre sections :
+  1. **Le problème** : ce que vous avez trouvé, en une ou deux phrases ;
+  2. **La démarche** : ce que vous avez essayé, y compris ce qui n'a pas marché ;
+  3. **La preuve** : les commandes et les sorties, **avant** et **après** votre changement ;
+  4. **Les limites** : ce que votre solution ne couvre pas.
+- Tout ce que vérifiait déjà `make check-m5` doit rester vert.
+
+**Notation (4 points)** : hypothèse argumentée à partir des mesures (1) ; essais menés un
+paramètre à la fois (1) ; amélioration mesurée dans les mêmes conditions (1,5) ; coût de la
+solution (ressources, démarrage à froid) discuté (0,5).
+
 ## Critères d'évaluation (noté sur 20)
 
 | Critère | Description | Points |
 |---|---|---|
-| Déploiement KServe | KServe installé dans le cluster du cours, ISVC READY, `/predict` fonctionnel via la passerelle, seuil servi = seuil du champion. | 6 |
-| Autoscaling | Autoscaler configuré (KPA sur le débit), scale-up observé sous charge, scale-to-zero mesuré. | 4 |
-| Benchmark | 3 runs Locust, table P50/P95/P99 + RPS + erreurs. | 4 |
+| Déploiement KServe | KServe installé dans le cluster du cours, ISVC READY, `/predict` fonctionnel via la passerelle, seuil servi = seuil du champion. | 5 |
+| Autoscaling | Autoscaler configuré (KPA sur le débit), scale-up observé sous charge, scale-to-zero mesuré. | 3 |
+| Benchmark | 3 runs Locust, table P50/P95/P99 + RPS + erreurs. | 3 |
 | Canary | v2 déployée, split 90/10 vérifié expérimentalement, promotion ou rollback. | 3 |
-| Rapport | 5 sections, analyse honnête du point de saturation. | 3 |
+| Rapport | 5 sections, analyse honnête du point de saturation. | 2 |
+| Mission autonome | Hypothèse, essais un paramètre à la fois, gain de P95 ou d'erreurs mesuré à charge égale (`reports/mission-m5.md`). | 4 |
 | **Total** | | **20** |
 
 ## Annexe — Troubleshooting
@@ -1388,13 +1495,14 @@ make check-m5
 | ISVC `READY=False` au bout de 5 min, pod en `ImagePullBackOff` | Image absente du registry ou nom erroné. | `curl localhost:5001/v2/scoring-api/tags/list` ; `kubectl describe pod -n scoring <pod>`. Pas de `kind load` : le registry est branché au cluster. |
 | ISVC `READY=False`, révision `RevisionMissing` ou « failed to resolve image to digest » | Knative essaie de résoudre le tag `localhost:5001/…`. | Relancer `make kserve` (ajoute `localhost:5001` à `registries-skipping-tag-resolving`), puis supprimer et réappliquer l'ISVC. |
 | Pod en `CrashLoopBackOff` | L'API ne démarre pas (modèle ou `dataset.yaml` absent de l'image). | `kubectl logs -n scoring <pod> -c kserve-container` ; reconstruire l'image (Lab 4). |
-| Pods KServe ou Knative `OOMKilled` ou `Pending` | Ressources Docker insuffisantes. | Docker Desktop : Resources > 8 Go RAM, 4+ CPU. Arrêter Airflow, mettre KFP en pause (encadré « Ressources requises »). |
+| Pods KServe ou Knative `OOMKilled` ou `Pending` | Mémoire de la VM insuffisante. | `free -g` ; VM à 12 Go (`VM_MEMORY=12288`) ; arrêter Airflow, mettre KFP en pause (encadré « Ressources requises »). |
+| `make kserve` très long, pods `Pending` ou nœuds `NotReady` | VM en mode lent (Hyper-V actif). | `Select-String … "fall back to NEM"` sous Windows (dépannage du Lab 0). |
 | `curl localhost:30080` : `Connection refused` | Service `kourier` pas en NodePort 30080, ou cluster créé sans le mapping. | `kubectl get svc kourier -n kourier-system` ; `docker port mlops-lab-control-plane` ; relancer `make kserve`. |
 | `curl` : 404 avec une réponse vide | En-tête `Host` absent ou erroné : Kourier ne sait pas où router. | `echo $ISVC_HOST` (nouveau terminal ?) ; le recalculer depuis `kubectl get isvc … -o jsonpath='{.status.url}'`. |
 | `curl /predict` : 503 Service Unavailable | Pod pas encore prêt. | `kubectl wait --for=condition=Ready pod -l serving.kserve.io/inferenceservice=scoring-model -n scoring`. |
 | Premier appel lent (plusieurs secondes) | Démarrage à froid après un scale-to-zero. | Normal avec `minReplicas: 0` ; `minReplicas: 1` pour l'éviter. |
 | `kubectl top pods` : `Metrics API not available` | metrics-server pas encore prêt. | Attendre 60 s après l'install, ou `kubectl rollout restart -n kube-system deploy/metrics-server`. |
-| Sous charge, `DESIREDSCALE` reste à 1 | Cible `scaleTarget` au-dessus de ce qu'un pod sait servir : saturé, il ne dépasse jamais la cible. | Baisser `scaleTarget`, ou passer à `scaleMetric: concurrency`. |
+| Sous charge, `DESIREDSCALE` reste à 1 | L'autoscaler ne voit jamais le débit dépasser sa cible. | Relire l'étape 5.1 : comparez la cible à ce qu'un pod sert réellement (`kubectl get kpa`, rapports Locust). |
 | Locust : 100 % d'échecs, `404` | `ISVC_HOST` non exporté dans le terminal de Locust. | `export ISVC_HOST=…` avant `uv run locust`. |
 | Locust : `connection reset`, erreurs au run 1000 | Le service sature (attendu au run 3), ou Locust lui-même (`CPU usage above 90%`). | Augmenter `maxReplicas`, relâcher les limites CPU ; côté Locust, `--processes 4`. |
 | `update rejected: deploymentMode cannot be changed` | On a changé l'annotation `deploymentMode` d'un ISVC existant. | Le mode est fixé à la création : `kubectl delete isvc …` puis réappliquer. |
@@ -1409,12 +1517,6 @@ make check-m5
 | Port-forward de secours | Passerelle indisponible et besoin d'un accès direct. | `kubectl port-forward -n scoring deploy/scoring-model-predictor-00001-deployment 8001:8000` puis `curl localhost:8001/health` (adapter le numéro de révision ; le port 8080 est pris par l'UI KFP). |
 | Nœud kind plein (`no space left`) | Images accumulées (Triton !). | `docker exec mlops-lab-worker crictl rmi --prune` (idem `mlops-lab-worker2`, `mlops-lab-control-plane`). |
 
-> [!NOTE]
-> **Prochaine étape**
-> Module 6 — CI/CD pour le ML avec Continuous Training. Vous allez automatiser le cycle complet :
-> push Git → tests → build de l'image → déploiement de l'InferenceService `scoring-model`, avec
-> Argo CD pour le GitOps et un ré-entraînement déclenché par la dérive des données.
-
 ## Pour aller plus loin
 
 - **HPA en mode Standard** : un InferenceService créé avec les annotations
@@ -1425,7 +1527,7 @@ make check-m5
   `<nom>-predictor`.
 - **KEDA** : `KSERVE_WITH_KEDA=1 make kserve` installe KEDA v2.21.0. En mode Standard,
   `serving.kserve.io/autoscalerClass: keda` et un bloc `spec.predictor.autoScaling` font créer
-  par KServe un `ScaledObject` ; avec les métriques Prometheus du Lab 7, on peut scaler sur le
+  par KServe un `ScaledObject` ; avec des métriques Prometheus, on peut scaler sur le
   débit réel, ou sur la longueur d'une file de demandes à scorer.
 - **Transformer** : un conteneur `spec.transformer` devant le prédicteur, pour un prétraitement
   qui évoluerait indépendamment du modèle (ici inutile : il est dans le graphe ONNX).
